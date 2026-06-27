@@ -22,6 +22,12 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Create .env file
+        run: |
+          echo "VITE_API_URL=https://api.digiutkal.com/api" > .env
+          echo "VITE_WS_URL=wss://api.digiutkal.com" >> .env
+          echo "Build-time .env created successfully."
+
       - name: Build
         run: npm run build
 

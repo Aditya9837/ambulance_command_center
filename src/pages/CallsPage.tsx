@@ -15,7 +15,15 @@ export default function CallsPage() {
     setCalls(await api.getActiveCalls())
   }, [])
 
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => {
+    let active = true
+    void api.getActiveCalls().then((data) => {
+      if (active) setCalls(data)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
 
   useWebSocket(useCallback((msg) => {
     if (['call_created', 'call_accepted', 'call_ended', 'call_updated'].includes(msg.type as string)) {

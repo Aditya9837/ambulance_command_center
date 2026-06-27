@@ -7,8 +7,7 @@ export function getWebSocketBase(): string {
     return `ws://${window.location.hostname}:8000`
   }
 
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}`
+  return 'wss://api.digiutkal.com'
 }
 
 export function buildWebSocketUrl(clientId: string, token: string | null): string | null {

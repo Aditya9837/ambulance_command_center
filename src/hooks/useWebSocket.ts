@@ -14,7 +14,7 @@ export function useWebSocket(
   onReconnect?: () => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
-  const clientId = useRef(`cc-${Math.random().toString(36).slice(2, 10)}`)
+  const [clientId] = useState(() => `cc-${crypto.randomUUID().slice(0, 8)}`)
   const handlerRef = useRef(onMessage)
   const onReconnectRef = useRef(onReconnect)
   const reconnectMs = useRef(MIN_RECONNECT_MS)
@@ -24,8 +24,10 @@ export function useWebSocket(
   const queueRef = useRef<string[]>([])
   const [isConnected, setIsConnected] = useState(false)
 
-  handlerRef.current = onMessage
-  onReconnectRef.current = onReconnect
+  useEffect(() => {
+    handlerRef.current = onMessage
+    onReconnectRef.current = onReconnect
+  }, [onMessage, onReconnect])
 
   const clearReconnect = () => {
     if (reconnectTimer.current) {
@@ -56,7 +58,7 @@ export function useWebSocket(
     if (!enabled) return
 
     const token = api.getToken()
-    const url = buildWebSocketUrl(clientId.current, token)
+    const url = buildWebSocketUrl(clientId, token)
     if (!url) return
 
     if (wsRef.current) {
@@ -95,9 +97,11 @@ export function useWebSocket(
     }
 
     wsRef.current = ws
-  }, [enabled, flushQueue, scheduleReconnect])
+  }, [clientId, enabled, flushQueue, scheduleReconnect])
 
-  connectRef.current = connect
+  useEffect(() => {
+    connectRef.current = connect
+  }, [connect])
 
   useEffect(() => {
     if (!enabled) return
@@ -129,5 +133,5 @@ export function useWebSocket(
     }
   }, [])
 
-  return { send, clientId: clientId.current, isConnected }
+  return { send, clientId, isConnected }
 }

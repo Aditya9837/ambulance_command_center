@@ -18,7 +18,18 @@ export default function DashboardPage() {
     setCalls(c)
   }, [])
 
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => {
+    let active = true
+    void Promise.all([api.getStats(), api.getActiveCalls()]).then(([s, c]) => {
+      if (active) {
+        setStats(s)
+        setCalls(c)
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [])
 
   useWebSocket(useCallback((msg) => {
     if (['call_created', 'call_accepted', 'call_ended', 'call_updated'].includes(msg.type as string)) {

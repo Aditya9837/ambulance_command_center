@@ -15,23 +15,21 @@ const ALLOWED_ROLES = ['admin', 'doctor']
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => Boolean(api.getToken()))
 
   useEffect(() => {
-    if (api.getToken()) {
-      api.getMe()
-        .then((u) => {
-          if (!ALLOWED_ROLES.includes(u.role)) {
-            api.setToken(null)
-            return
-          }
-          setUser(u)
-        })
-        .catch(() => api.setToken(null))
-        .finally(() => setLoading(false))
-    } else {
-      setLoading(false)
-    }
+    if (!api.getToken()) return
+
+    api.getMe()
+      .then((u) => {
+        if (!ALLOWED_ROLES.includes(u.role)) {
+          api.setToken(null)
+          return
+        }
+        setUser(u)
+      })
+      .catch(() => api.setToken(null))
+      .finally(() => setLoading(false))
   }, [])
 
   const login = async (email: string, password: string) => {
@@ -57,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error('useAuth must be used within AuthProvider')

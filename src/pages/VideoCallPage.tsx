@@ -38,13 +38,25 @@ export default function VideoCallPage() {
   }, [])
 
   const { send } = useWebSocket(handleWsMessage, true, handleWsReconnect)
-  const webrtc = useWebRTC(call?.room_id ?? null, send, true)
+  const {
+    localVideoRef,
+    remoteVideoRef,
+    isConnected,
+    isMuted,
+    isVideoOff,
+    handleSignal,
+    resendOffer,
+    retryJoin,
+    cleanup,
+    toggleMute,
+    toggleVideo,
+  } = useWebRTC(call?.room_id ?? null, send, true)
 
   useEffect(() => {
-    signalHandlerRef.current = webrtc.handleSignal
-    resendOfferRef.current = () => void webrtc.resendOffer()
-    retryJoinRef.current = () => void webrtc.retryJoin()
-  }, [webrtc.handleSignal, webrtc.resendOffer, webrtc.retryJoin])
+    signalHandlerRef.current = handleSignal
+    resendOfferRef.current = () => void resendOffer()
+    retryJoinRef.current = () => void retryJoin()
+  }, [handleSignal, resendOffer, retryJoin])
 
   useEffect(() => {
     if (!callId) return
@@ -58,7 +70,7 @@ export default function VideoCallPage() {
   const handleEnd = async () => {
     if (call) {
       await api.endCall(call.id)
-      webrtc.cleanup()
+      cleanup()
       navigate('/calls')
     }
   }
@@ -92,7 +104,7 @@ export default function VideoCallPage() {
             {call.priority}
           </span>
           <div className="flex items-center gap-1.5 text-xs">
-            {webrtc.isConnected ? (
+            {isConnected ? (
               <><Wifi className="w-3.5 h-3.5 text-emerald-400" /><span className="text-emerald-400">Connected</span></>
             ) : (
               <><WifiOff className="w-3.5 h-3.5 text-amber-400" /><span className="text-amber-400">Connecting...</span></>
@@ -106,8 +118,8 @@ export default function VideoCallPage() {
 
       <div className="flex-1 relative p-4">
         <div className="relative w-full h-full rounded-2xl overflow-hidden bg-slate-900">
-          <video ref={webrtc.remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
-          {!webrtc.isConnected && (
+          <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+          {!isConnected && (
             <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80">
               <div className="text-center">
                 <div className="w-12 h-12 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
@@ -116,17 +128,17 @@ export default function VideoCallPage() {
             </div>
           )}
           <div className="absolute bottom-4 right-4 w-48 h-36 rounded-xl overflow-hidden border-2 border-slate-700 shadow-2xl">
-            <video ref={webrtc.localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+            <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
           </div>
         </div>
       </div>
 
       <footer className="py-6 border-t border-slate-800">
         <VideoControls
-          isMuted={webrtc.isMuted}
-          isVideoOff={webrtc.isVideoOff}
-          onToggleMute={webrtc.toggleMute}
-          onToggleVideo={webrtc.toggleVideo}
+          isMuted={isMuted}
+          isVideoOff={isVideoOff}
+          onToggleMute={toggleMute}
+          onToggleVideo={toggleVideo}
           onEnd={handleEnd}
         />
       </footer>

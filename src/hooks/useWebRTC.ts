@@ -21,9 +21,12 @@ export function useWebRTC(
   const localStreamRef = useRef<MediaStream | null>(null)
   const roomIdRef = useRef(roomId)
   const isInitiatorRef = useRef(isInitiator)
-  roomIdRef.current = roomId
-  isInitiatorRef.current = isInitiator
   const sendOfferRef = useRef<(iceRestart?: boolean) => Promise<void>>(async () => {})
+
+  useEffect(() => {
+    roomIdRef.current = roomId
+    isInitiatorRef.current = isInitiator
+  }, [roomId, isInitiator])
   const [isConnected, setIsConnected] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [isVideoOff, setIsVideoOff] = useState(false)
@@ -147,7 +150,9 @@ export function useWebRTC(
     }
   }, [ensurePeerConnection, send])
 
-  sendOfferRef.current = sendOffer
+  useEffect(() => {
+    sendOfferRef.current = sendOffer
+  }, [sendOffer])
 
   const requestOffer = useCallback(() => {
     const rid = roomIdRef.current
