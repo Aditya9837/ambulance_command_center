@@ -10,6 +10,7 @@ class ApiClient {
   }
 
   getToken() {
+    this.token = localStorage.getItem('token')
     return this.token
   }
 

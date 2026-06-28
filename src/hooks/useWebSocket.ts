@@ -7,6 +7,7 @@ type MessageHandler = (data: Record<string, unknown>) => void
 const MIN_RECONNECT_MS = 2000
 const MAX_RECONNECT_MS = 15000
 const MAX_QUEUE = 50
+const TOKEN_RETRY_MS = 1000
 
 export function useWebSocket(
   onMessage: MessageHandler,
@@ -15,6 +16,7 @@ export function useWebSocket(
 ) {
   const wsRef = useRef<WebSocket | null>(null)
   const [clientId] = useState(() => `cc-${crypto.randomUUID().slice(0, 8)}`)
+  const [authToken, setAuthToken] = useState(() => api.getToken())
   const handlerRef = useRef(onMessage)
   const onReconnectRef = useRef(onReconnect)
   const reconnectMs = useRef(MIN_RECONNECT_MS)
@@ -28,6 +30,23 @@ export function useWebSocket(
     handlerRef.current = onMessage
     onReconnectRef.current = onReconnect
   }, [onMessage, onReconnect])
+
+  useEffect(() => {
+    const syncToken = () => {
+      const next = api.getToken()
+      setAuthToken((prev) => (prev === next ? prev : next))
+    }
+
+    syncToken()
+    const interval = setInterval(syncToken, TOKEN_RETRY_MS)
+    window.addEventListener('focus', syncToken)
+    window.addEventListener('storage', syncToken)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('focus', syncToken)
+      window.removeEventListener('storage', syncToken)
+    }
+  }, [])
 
   const clearReconnect = () => {
     if (reconnectTimer.current) {
@@ -48,6 +67,12 @@ export function useWebSocket(
     }, reconnectMs.current)
   }, [enabled])
 
+  const scheduleTokenRetry = useCallback(() => {
+    if (intentionalClose.current || !enabled) return
+    clearReconnect()
+    reconnectTimer.current = setTimeout(() => connectRef.current(), TOKEN_RETRY_MS)
+  }, [enabled])
+
   const flushQueue = useCallback((ws: WebSocket) => {
     while (queueRef.current.length && ws.readyState === WebSocket.OPEN) {
       ws.send(queueRef.current.shift()!)
@@ -57,9 +82,12 @@ export function useWebSocket(
   const connect = useCallback(() => {
     if (!enabled) return
 
-    const token = api.getToken()
+    const token = authToken ?? api.getToken()
     const url = buildWebSocketUrl(clientId, token)
-    if (!url) return
+    if (!url) {
+      scheduleTokenRetry()
+      return
+    }
 
     if (wsRef.current) {
       intentionalClose.current = true
@@ -90,14 +118,19 @@ export function useWebSocket(
       ws.close()
     }
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       wsRef.current = null
       setIsConnected(false)
-      if (!intentionalClose.current) scheduleReconnect()
+      if (intentionalClose.current) return
+      if (event.code === 4401) {
+        api.setToken(null)
+        return
+      }
+      scheduleReconnect()
     }
 
     wsRef.current = ws
-  }, [clientId, enabled, flushQueue, scheduleReconnect])
+  }, [authToken, clientId, enabled, flushQueue, scheduleReconnect, scheduleTokenRetry])
 
   useEffect(() => {
     connectRef.current = connect
