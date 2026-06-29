@@ -1,13 +1,31 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { fetchIceConfig } from '../lib/iceConfig'
+import { useAdaptiveQuality, type ConnectionQuality } from './useAdaptiveQuality'
 
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-]
+const MAX_VIDEO_BITRATE = 400_000
+const MAX_VIDEO_FPS = 15
+const MAX_AUDIO_BITRATE = 32_000
+const INITIAL_SCALE_DOWN = 1.5
 
 const OFFER_RETRY_MS = 4000
 const CONNECT_TIMEOUT_MS = 20000
+
+function applySenderParams(pc: RTCPeerConnection) {
+  pc.getSenders().forEach((sender) => {
+    if (!sender.track) return
+    const params = sender.getParameters()
+    if (!params.encodings?.length) params.encodings = [{}]
+    if (sender.track.kind === 'video') {
+      params.degradationPreference = 'maintain-framerate'
+      params.encodings[0].maxBitrate = MAX_VIDEO_BITRATE
+      params.encodings[0].maxFramerate = MAX_VIDEO_FPS
+      params.encodings[0].scaleResolutionDownBy = INITIAL_SCALE_DOWN
+    } else if (sender.track.kind === 'audio') {
+      params.encodings[0].maxBitrate = MAX_AUDIO_BITRATE
+    }
+    void sender.setParameters(params).catch(() => {})
+  })
+}
 
 export function useWebRTC(
   roomId: string | null,
@@ -17,20 +35,29 @@ export function useWebRTC(
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
+  const pcConfigRef = useRef<RTCConfiguration | null>(null)
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([])
   const localStreamRef = useRef<MediaStream | null>(null)
+  const remoteStreamRef = useRef(new MediaStream())
   const roomIdRef = useRef(roomId)
   const isInitiatorRef = useRef(isInitiator)
   const sendOfferRef = useRef<(iceRestart?: boolean) => Promise<void>>(async () => {})
+  const shareCameraRef = useRef(false)
 
   useEffect(() => {
     roomIdRef.current = roomId
     isInitiatorRef.current = isInitiator
   }, [roomId, isInitiator])
+
   const [isConnected, setIsConnected] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
-  const [isVideoOff, setIsVideoOff] = useState(false)
+  const [isVideoOff, setIsVideoOff] = useState(true)
+  const [shareCamera, setShareCamera] = useState(false)
   const [mediaError, setMediaError] = useState<string | null>(null)
+
+  shareCameraRef.current = shareCamera
+
+  const connectionQuality = useAdaptiveQuality(pcRef)
 
   const flushPendingIce = useCallback(async (pc: RTCPeerConnection) => {
     const pending = pendingIceRef.current.splice(0)
@@ -45,6 +72,8 @@ export function useWebRTC(
     pcRef.current?.close()
     pcRef.current = null
     pendingIceRef.current = []
+    remoteStreamRef.current.getTracks().forEach((t) => remoteStreamRef.current.removeTrack(t))
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
     setIsConnected(false)
   }, [])
 
@@ -54,29 +83,52 @@ export function useWebRTC(
     resetPeerConnection()
   }, [resetPeerConnection])
 
-  const startMedia = useCallback(async () => {
-    if (localStreamRef.current?.active) return localStreamRef.current
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      localStreamRef.current = stream
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream
-        void localVideoRef.current.play().catch(() => {})
+  const startMedia = useCallback(async (withVideo = false) => {
+    if (localStreamRef.current?.active && !withVideo) return localStreamRef.current
+
+    if (withVideo && shareCameraRef.current) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640, max: 1280 }, height: { ideal: 480, max: 720 }, frameRate: { ideal: 15, max: 30 } },
+          audio: true,
+        })
+        localStreamRef.current?.getTracks().forEach((t) => t.stop())
+        localStreamRef.current = stream
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream
+          void localVideoRef.current.play().catch(() => {})
+        }
+        return stream
+      } catch {
+        setMediaError('Could not enable camera.')
+        return localStreamRef.current
       }
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true })
+      localStreamRef.current = stream
+      if (localVideoRef.current) localVideoRef.current.srcObject = null
       return stream
     } catch {
-      setMediaError('Allow camera & microphone to join the call.')
-      return null
+      const empty = new MediaStream()
+      localStreamRef.current = empty
+      setMediaError('Mic unavailable — receiving ambulance feed only.')
+      return empty
     }
   }, [])
 
   const ensurePeerConnection = useCallback(async (): Promise<RTCPeerConnection | null> => {
     if (pcRef.current && pcRef.current.connectionState !== 'closed') return pcRef.current
 
-    const stream = await startMedia()
+    if (!pcConfigRef.current) {
+      pcConfigRef.current = await fetchIceConfig()
+    }
+
+    const stream = await startMedia(shareCameraRef.current)
     if (!stream) return null
 
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, iceCandidatePoolSize: 4 })
+    const pc = new RTCPeerConnection(pcConfigRef.current)
 
     pc.onicecandidate = (event) => {
       if (event.candidate && roomIdRef.current) {
@@ -89,8 +141,14 @@ export function useWebRTC(
     }
 
     pc.ontrack = (event) => {
+      const remote = remoteStreamRef.current
+      if (!remote.getTrackById(event.track.id)) {
+        remote.addTrack(event.track)
+      }
       if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = event.streams[0]
+        if (remoteVideoRef.current.srcObject !== remote) {
+          remoteVideoRef.current.srcObject = remote
+        }
         void remoteVideoRef.current.play().catch(() => {})
       }
       setIsConnected(true)
@@ -100,6 +158,7 @@ export function useWebRTC(
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState
       if (s === 'connected') {
+        applySenderParams(pc)
         setIsConnected(true)
         setMediaError(null)
       }
@@ -126,6 +185,19 @@ export function useWebRTC(
     }
 
     stream.getTracks().forEach((track) => pc.addTrack(track, stream))
+
+    try {
+      const { codecs } = RTCRtpReceiver.getCapabilities('video') ?? { codecs: [] }
+      const h264 = codecs.filter((c) => c.mimeType === 'video/H264')
+      const rest = codecs.filter((c) => c.mimeType !== 'video/H264')
+      const preferred = [...h264, ...rest]
+      pc.getTransceivers().forEach((t) => {
+        if (t.receiver.track.kind === 'video' && preferred.length) {
+          try { t.setCodecPreferences(preferred) } catch { /* ignore */ }
+        }
+      })
+    } catch { /* ignore */ }
+
     pcRef.current = pc
     return pc
   }, [send, startMedia])
@@ -218,12 +290,37 @@ export function useWebRTC(
     })
   }
 
-  const toggleVideo = () => {
-    localStreamRef.current?.getVideoTracks().forEach((t) => {
-      t.enabled = !t.enabled
-      setIsVideoOff(!t.enabled)
-    })
-  }
+  const toggleShareCamera = useCallback(async () => {
+    const next = !shareCameraRef.current
+    shareCameraRef.current = next
+    setShareCamera(next)
+    setIsVideoOff(!next)
+
+    if (!next) {
+      localStreamRef.current?.getVideoTracks().forEach((t) => {
+        t.stop()
+        localStreamRef.current?.removeTrack(t)
+      })
+      if (localVideoRef.current) localVideoRef.current.srcObject = null
+      await sendOffer(true)
+      return
+    }
+
+    const stream = await startMedia(true)
+    const pc = pcRef.current ?? (await ensurePeerConnection())
+    if (!pc || !stream) return
+
+    const existing = pc.getSenders().find((s) => s.track?.kind === 'video')
+    const videoTrack = stream.getVideoTracks()[0]
+    if (videoTrack) {
+      if (existing) {
+        await existing.replaceTrack(videoTrack)
+      } else {
+        pc.addTrack(videoTrack, stream)
+      }
+    }
+    await sendOffer(true)
+  }, [shareCamera, startMedia, ensurePeerConnection, sendOffer])
 
   useEffect(() => {
     if (roomId) void joinRoom()
@@ -265,9 +362,11 @@ export function useWebRTC(
     isConnected,
     isMuted,
     isVideoOff,
+    shareCamera,
+    connectionQuality,
     mediaError,
     toggleMute,
-    toggleVideo,
+    toggleShareCamera,
     handleSignal,
     resendOffer,
     cleanup,
@@ -275,3 +374,5 @@ export function useWebRTC(
     resetPeerConnection,
   }
 }
+
+export type { ConnectionQuality }

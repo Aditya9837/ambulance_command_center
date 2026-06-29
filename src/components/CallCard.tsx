@@ -79,41 +79,61 @@ export default function CallCard({ call, onAccept, onJoin, onEnd, compact }: Cal
 export function VideoControls({
   isMuted,
   isVideoOff,
+  shareCamera,
+  overlay = false,
   onToggleMute,
   onToggleVideo,
   onEnd,
 }: {
   isMuted: boolean
   isVideoOff: boolean
+  shareCamera?: boolean
+  overlay?: boolean
   onToggleMute: () => void
   onToggleVideo: () => void
   onEnd: () => void
 }) {
+  const btn = overlay ? 'w-11 h-11 sm:w-12 sm:h-12' : 'w-12 h-12'
+  const endBtn = overlay ? 'w-12 h-12 sm:w-14 sm:h-14' : 'w-14 h-14'
+  const icon = overlay ? 'w-[18px] h-[18px] sm:w-5 sm:h-5' : 'w-5 h-5'
+  const endIcon = overlay ? 'w-5 h-5 sm:w-6 sm:h-6' : 'w-6 h-6'
+
   return (
-    <div className="flex items-center justify-center gap-3">
+    <div className={cn('flex items-center justify-center', overlay ? 'gap-2.5 sm:gap-3' : 'gap-3')}>
       <button
         onClick={onToggleMute}
         className={cn(
-          'w-12 h-12 rounded-full flex items-center justify-center transition-colors',
-          isMuted ? 'bg-red-500/20 text-red-400' : 'bg-slate-700 text-white hover:bg-slate-600',
+          btn,
+          'rounded-full flex items-center justify-center transition-colors',
+          isMuted ? 'bg-red-500/30 text-red-300' : 'bg-slate-700/90 text-white hover:bg-slate-600',
         )}
+        aria-label={isMuted ? 'Unmute' : 'Mute'}
       >
-        {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+        {isMuted ? <MicOff className={icon} /> : <Mic className={icon} />}
       </button>
       <button
         onClick={onToggleVideo}
+        title={shareCamera === false || isVideoOff ? 'Share camera with paramedic' : 'Stop sharing camera'}
         className={cn(
-          'w-12 h-12 rounded-full flex items-center justify-center transition-colors',
-          isVideoOff ? 'bg-red-500/20 text-red-400' : 'bg-slate-700 text-white hover:bg-slate-600',
+          btn,
+          'rounded-full flex items-center justify-center transition-colors',
+          isVideoOff
+            ? 'bg-slate-700/90 text-slate-400 hover:bg-slate-600'
+            : 'bg-cyan-600/40 text-cyan-200 hover:bg-cyan-600/60',
         )}
+        aria-label={isVideoOff ? 'Share camera' : 'Stop camera'}
       >
-        {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+        {isVideoOff ? <VideoOff className={icon} /> : <Video className={icon} />}
       </button>
       <button
         onClick={onEnd}
-        className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center transition-colors"
+        className={cn(
+          endBtn,
+          'rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center transition-colors shadow-lg shadow-red-900/30',
+        )}
+        aria-label="End call"
       >
-        <PhoneOff className="w-6 h-6" />
+        <PhoneOff className={endIcon} />
       </button>
     </div>
   )
