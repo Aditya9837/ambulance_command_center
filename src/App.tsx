@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import CallsPage from './pages/CallsPage'
 import AmbulancesPage from './pages/AmbulancesPage'
+import CallHistoryPage from './pages/CallHistoryPage'
 import VideoCallPage from './pages/VideoCallPage'
 
 export default function App() {
@@ -17,6 +18,7 @@ export default function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/calls" element={<CallsPage />} />
+            <Route path="/history" element={<CallHistoryPage />} />
             <Route path="/ambulances" element={<AmbulancesPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

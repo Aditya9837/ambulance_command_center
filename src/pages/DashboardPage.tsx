@@ -4,6 +4,7 @@ import { Ambulance, Phone, Users, Activity, AlertTriangle } from 'lucide-react'
 import StatCard from '../components/StatCard'
 import CallCard from '../components/CallCard'
 import { api } from '../lib/api'
+import { useEndCallFlow } from '../hooks/useEndCallFlow'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { CallSession, DashboardStats } from '../types'
 
@@ -17,6 +18,8 @@ export default function DashboardPage() {
     setStats(s)
     setCalls(c)
   }, [])
+
+  const { requestEnd, modal } = useEndCallFlow(refresh)
 
   useEffect(() => {
     let active = true
@@ -47,6 +50,7 @@ export default function DashboardPage() {
 
   return (
     <div className="p-8">
+      {modal}
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-white">Command Center Dashboard</h1>
         <p className="text-sm text-slate-400 mt-1">Real-time overview of all ambulance consultations</p>
@@ -137,7 +141,7 @@ export default function DashboardPage() {
                 key={call.id}
                 call={call}
                 onJoin={() => navigate(`/call/${call.id}`)}
-                onEnd={async () => { await api.endCall(call.id); refresh() }}
+                onEnd={() => requestEnd(call)}
               />
             ))}
           </div>

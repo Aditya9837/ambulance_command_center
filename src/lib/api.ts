@@ -53,8 +53,40 @@ class ApiClient {
     return this.request<import('../types').CallSession[]>('/calls/active')
   }
 
-  getCallHistory() {
-    return this.request<import('../types').CallSession[]>('/calls/history')
+  getCallHistory(params?: { limit?: number; cursor?: string | null }) {
+    const search = new URLSearchParams()
+    if (params?.limit) search.set('limit', String(params.limit))
+    if (params?.cursor) search.set('cursor', params.cursor)
+    const qs = search.toString()
+    return this.request<import('../types').CallHistoryPage>(
+      `/calls/history${qs ? `?${qs}` : ''}`,
+    )
+  }
+
+  async getAllCallHistory(pageSize = 50) {
+    const all: import('../types').CallSession[] = []
+    let cursor: string | null = null
+    for (;;) {
+      const page = await this.getCallHistory({ limit: pageSize, cursor })
+      all.push(...page.items)
+      if (!page.has_more || !page.next_cursor) break
+      cursor = page.next_cursor
+    }
+    return all
+  }
+
+  savePrescription(callId: number, notes: string) {
+    return this.request<import('../types').CallSession>(`/calls/${callId}/prescription`, {
+      method: 'POST',
+      body: JSON.stringify({ notes }),
+    })
+  }
+
+  updateCall(callId: number, data: { notes?: string }) {
+    return this.request<import('../types').CallSession>(`/calls/${callId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
   }
 
   getAmbulances() {
@@ -73,8 +105,10 @@ class ApiClient {
   }
 
   endCall(callId: number, notes?: string) {
-    const params = notes ? `?notes=${encodeURIComponent(notes)}` : ''
-    return this.request<import('../types').CallSession>(`/calls/${callId}/end${params}`, { method: 'POST' })
+    return this.request<import('../types').CallSession>(`/calls/${callId}/end`, {
+      method: 'POST',
+      body: notes ? JSON.stringify({ notes }) : undefined,
+    })
   }
 }
 

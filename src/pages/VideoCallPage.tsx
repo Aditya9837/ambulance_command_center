@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Wifi, WifiOff } from 'lucide-react'
+import { ArrowLeft, Maximize2, Minimize2, Wifi, WifiOff } from 'lucide-react'
 import { VideoControls } from '../components/CallCard'
+import EndCallModal from '../components/EndCallModal'
 import { api } from '../lib/api'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useWebRTC } from '../hooks/useWebRTC'
@@ -14,19 +15,32 @@ const qualityLabel = {
   poor: { text: 'Poor', className: 'text-red-400' },
 } as const
 
+type VideoFitMode = 'fit' | 'fill'
+type PrescriptionModalMode = 'end' | 'prescription'
+
 export default function VideoCallPage() {
   const { callId } = useParams()
   const navigate = useNavigate()
   const [call, setCall] = useState<CallSession | null>(null)
+  const [showEndModal, setShowEndModal] = useState(false)
+  const [prescriptionMode, setPrescriptionMode] = useState<PrescriptionModalMode>('end')
+  const [videoFit, setVideoFit] = useState<VideoFitMode>(() => {
+    const saved = localStorage.getItem('videoFit')
+    return saved === 'fill' ? 'fill' : 'fit'
+  })
+  const [remoteAspect, setRemoteAspect] = useState<number | null>(null)
   const signalHandlerRef = useRef<(type: string, payload: RTCSessionDescriptionInit | RTCIceCandidateInit | RTCIceCandidateInit[]) => void>(() => {})
   const resendOfferRef = useRef<() => void>(() => {})
   const retryJoinRef = useRef<() => void>(() => {})
   const notifyRoomJoinedRef = useRef<(roomId: string) => void>(() => {})
+  const cleanupRef = useRef<() => void>(() => {})
 
   const handleWsMessage = useCallback(
     (msg: Record<string, unknown>) => {
       if (msg.type === 'call_ended') {
-        navigate('/calls')
+        cleanupRef.current()
+        setPrescriptionMode('prescription')
+        setShowEndModal(true)
         return
       }
       if (msg.type === 'join_denied') {
@@ -57,7 +71,7 @@ export default function VideoCallPage() {
         signalHandlerRef.current(msg.type as string, msg.payload as RTCSessionDescriptionInit)
       }
     },
-    [navigate],
+    [],
   )
 
   const handleWsReconnect = useCallback(() => {
@@ -88,7 +102,8 @@ export default function VideoCallPage() {
     resendOfferRef.current = () => void resendOffer()
     retryJoinRef.current = () => void retryJoin()
     notifyRoomJoinedRef.current = notifyRoomJoined
-  }, [handleSignal, resendOffer, retryJoin, notifyRoomJoined])
+    cleanupRef.current = cleanup
+  }, [handleSignal, resendOffer, retryJoin, notifyRoomJoined, cleanup])
 
   useEffect(() => {
     if (!callId) return
@@ -99,12 +114,58 @@ export default function VideoCallPage() {
     })
   }, [callId, navigate])
 
-  const handleEnd = async () => {
-    if (call) {
-      await api.endCall(call.id)
-      cleanup()
-      navigate('/calls')
+  useEffect(() => {
+    const video = remoteVideoRef.current
+    if (!video) return
+
+    const updateAspect = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        setRemoteAspect(video.videoWidth / video.videoHeight)
+      }
     }
+
+    video.addEventListener('loadedmetadata', updateAspect)
+    video.addEventListener('resize', updateAspect)
+    updateAspect()
+
+    return () => {
+      video.removeEventListener('loadedmetadata', updateAspect)
+      video.removeEventListener('resize', updateAspect)
+    }
+  }, [remoteVideoRef, isConnected])
+
+  const toggleVideoFit = () => {
+    setVideoFit((prev) => {
+      const next = prev === 'fit' ? 'fill' : 'fit'
+      localStorage.setItem('videoFit', next)
+      return next
+    })
+  }
+
+  const handleConfirmEnd = async (prescriptionHtml: string | null) => {
+    if (!call) return
+    if (prescriptionMode === 'prescription') {
+      if (prescriptionHtml) {
+        await api.savePrescription(call.id, prescriptionHtml)
+      }
+    } else {
+      await api.endCall(call.id, prescriptionHtml ?? undefined)
+      cleanup()
+    }
+    setShowEndModal(false)
+    navigate('/history')
+  }
+
+  const handleCancelEnd = () => {
+    setShowEndModal(false)
+    if (prescriptionMode === 'prescription') {
+      navigate('/history')
+    }
+  }
+
+  const openEndModal = () => {
+    setPrescriptionMode('end')
+    setShowEndModal(true)
   }
 
   if (!call) {
@@ -120,9 +181,19 @@ export default function VideoCallPage() {
     mediaError ??
     (!shareCamera && isConnected ? 'Camera off — tap video button to share with paramedic' : null)
 
+  const objectFitClass = videoFit === 'fit' ? 'object-contain' : 'object-cover'
+
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#0b1120] h-[100dvh] max-h-[100dvh]">
-      {/* Compact header — shrinks on small screens */}
+      {showEndModal && (
+        <EndCallModal
+          mode={prescriptionMode}
+          ambulanceLabel={`${call.ambulance?.vehicle_id} — ${call.ambulance?.name}`}
+          onConfirm={handleConfirmEnd}
+          onCancel={handleCancelEnd}
+        />
+      )}
+
       <header className="shrink-0 flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-2 sm:py-3 border-b border-slate-800/80 bg-[#0b1120]/95 backdrop-blur-sm z-20">
         <button
           onClick={() => navigate('/calls')}
@@ -175,14 +246,25 @@ export default function VideoCallPage() {
         </div>
       </header>
 
-      {/* Video stage — fills all remaining space, no page scroll */}
-      <div className="relative flex-1 min-h-0 w-full">
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          playsInline
-          className="absolute inset-0 w-full h-full object-contain sm:object-cover bg-black"
-        />
+      <div className="relative flex-1 min-h-0 w-full flex items-center justify-center bg-black">
+        <div
+          className={cn(
+            'relative w-full h-full flex items-center justify-center',
+            videoFit === 'fit' && remoteAspect ? 'max-w-full max-h-full' : '',
+          )}
+          style={
+            videoFit === 'fit' && remoteAspect
+              ? { aspectRatio: remoteAspect, maxWidth: '100%', maxHeight: '100%' }
+              : undefined
+          }
+        >
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            className={cn('w-full h-full bg-black', objectFitClass)}
+          />
+        </div>
 
         {!isConnected && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80 z-10">
@@ -193,7 +275,6 @@ export default function VideoCallPage() {
           </div>
         )}
 
-        {/* Status hint overlay — no extra layout row */}
         {statusHint && (
           <div className="absolute top-2 left-2 right-2 sm:top-3 sm:left-3 sm:right-auto sm:max-w-md z-10">
             <p
@@ -209,7 +290,16 @@ export default function VideoCallPage() {
           </div>
         )}
 
-        {/* Doctor PiP when sharing camera */}
+        <button
+          type="button"
+          onClick={toggleVideoFit}
+          title={videoFit === 'fit' ? 'Fill screen (crop)' : 'Fit to screen (full frame)'}
+          className="absolute bottom-24 left-3 sm:bottom-28 sm:left-4 z-10 p-2 rounded-lg bg-slate-900/70 border border-slate-700/50 text-slate-300 hover:text-white backdrop-blur-md"
+          aria-label={videoFit === 'fit' ? 'Switch to fill mode' : 'Switch to fit mode'}
+        >
+          {videoFit === 'fit' ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
+        </button>
+
         {shareCamera && (
           <div className="absolute top-2 right-2 sm:top-3 sm:right-3 w-24 h-[4.5rem] sm:w-36 sm:h-28 md:w-44 md:h-32 rounded-lg sm:rounded-xl overflow-hidden border-2 border-slate-600/80 shadow-2xl z-10 bg-black">
             <video
@@ -222,7 +312,6 @@ export default function VideoCallPage() {
           </div>
         )}
 
-        {/* Controls overlaid on video — always visible without scrolling */}
         <div className="absolute bottom-0 inset-x-0 z-20 pointer-events-none">
           <div className="bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-10 sm:pt-14 pb-[max(0.75rem,env(safe-area-inset-bottom))] px-3 sm:px-6">
             <div className="pointer-events-auto flex justify-center">
@@ -233,7 +322,7 @@ export default function VideoCallPage() {
                 shareCamera={shareCamera}
                 onToggleMute={toggleMute}
                 onToggleVideo={() => void toggleShareCamera()}
-                onEnd={handleEnd}
+                onEnd={openEndModal}
               />
             </div>
           </div>

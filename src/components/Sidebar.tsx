@@ -1,11 +1,12 @@
 import { NavLink } from 'react-router-dom'
-import { Activity, Ambulance, LayoutDashboard, LogOut, Phone, User } from 'lucide-react'
+import { Activity, Ambulance, History, LayoutDashboard, LogOut, Phone, User } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { cn } from '../lib/utils'
 
 const links = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/calls', icon: Phone, label: 'Live Calls' },
+  { to: '/history', icon: History, label: 'Call History' },
   { to: '/ambulances', icon: Ambulance, label: 'Ambulances' },
 ]
 

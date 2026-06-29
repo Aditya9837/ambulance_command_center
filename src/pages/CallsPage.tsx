@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Search } from 'lucide-react'
 import CallCard from '../components/CallCard'
 import { api } from '../lib/api'
+import { useEndCallFlow } from '../hooks/useEndCallFlow'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { CallSession } from '../types'
 
@@ -14,6 +15,8 @@ export default function CallsPage() {
   const refresh = useCallback(async () => {
     setCalls(await api.getActiveCalls())
   }, [])
+
+  const { requestEnd, modal } = useEndCallFlow(refresh)
 
   useEffect(() => {
     let active = true
@@ -40,6 +43,7 @@ export default function CallsPage() {
 
   return (
     <div className="p-8">
+      {modal}
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-white">Live Calls</h1>
         <p className="text-sm text-slate-400 mt-1">
@@ -77,7 +81,7 @@ export default function CallsPage() {
               call={call}
               onAccept={() => handleAccept(call.id)}
               onJoin={() => navigate(`/call/${call.id}`)}
-              onEnd={async () => { await api.endCall(call.id); refresh() }}
+              onEnd={() => requestEnd(call)}
             />
           ))}
         </div>

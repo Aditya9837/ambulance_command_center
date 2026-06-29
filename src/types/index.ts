@@ -42,6 +42,12 @@ export interface CallSession {
   doctor?: User
 }
 
+export interface CallHistoryPage {
+  items: CallSession[]
+  next_cursor: string | null
+  has_more: boolean
+}
+
 export interface DashboardStats {
   total_ambulances: number
   available_ambulances: number
