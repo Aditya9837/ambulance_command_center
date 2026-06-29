@@ -142,7 +142,7 @@ export function useWebSocket(
     connect()
     const ping = setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'ping' }))
+        wsRef.current.send(JSON.stringify({ type: 'ping', ts: Date.now() }))
       }
     }, 25000)
 

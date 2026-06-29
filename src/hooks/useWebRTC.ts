@@ -10,6 +10,8 @@ const INITIAL_SCALE_DOWN = 1.0
 const OFFER_RETRY_INITIAL_MS = 8000
 const OFFER_RETRY_MAX_MS = 20000
 const CONNECT_TIMEOUT_MS = 20000
+const ICE_BATCH_FLUSH_MS = 50
+const ROOM_JOIN_TIMEOUT_MS = 3000
 
 function applySenderParams(pc: RTCPeerConnection) {
   pc.getSenders().forEach((sender) => {
@@ -44,6 +46,9 @@ export function useWebRTC(
   const isInitiatorRef = useRef(isInitiator)
   const sendOfferRef = useRef<(iceRestart?: boolean) => Promise<void>>(async () => {})
   const shareCameraRef = useRef(true)
+  const iceBatchRef = useRef<RTCIceCandidateInit[]>([])
+  const iceFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const roomJoinedResolverRef = useRef<((roomId: string) => void) | null>(null)
 
   useEffect(() => {
     roomIdRef.current = roomId
@@ -59,6 +64,47 @@ export function useWebRTC(
   shareCameraRef.current = shareCamera
 
   const connectionQuality = useAdaptiveQuality(pcRef)
+
+  const flushIceBatch = useCallback((endOfCandidates = false) => {
+    if (iceFlushTimerRef.current) {
+      clearTimeout(iceFlushTimerRef.current)
+      iceFlushTimerRef.current = null
+    }
+    const rid = roomIdRef.current
+    if (!rid) return
+    const batch = iceBatchRef.current.splice(0)
+    if (batch.length) {
+      send({ type: 'ice_candidates', room_id: rid, payload: batch })
+    }
+    if (endOfCandidates) {
+      send({ type: 'ice_gathering_complete', room_id: rid })
+    }
+  }, [send])
+
+  const queueIceCandidate = useCallback((candidate: RTCIceCandidateInit) => {
+    iceBatchRef.current.push(candidate)
+    if (iceFlushTimerRef.current) return
+    iceFlushTimerRef.current = setTimeout(() => flushIceBatch(false), ICE_BATCH_FLUSH_MS)
+  }, [flushIceBatch])
+
+  const waitForRoomJoined = useCallback((roomId: string) => {
+    return new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        roomJoinedResolverRef.current = null
+        resolve()
+      }, ROOM_JOIN_TIMEOUT_MS)
+      roomJoinedResolverRef.current = (id) => {
+        if (id !== roomId) return
+        clearTimeout(timeout)
+        roomJoinedResolverRef.current = null
+        resolve()
+      }
+    })
+  }, [])
+
+  const notifyRoomJoined = useCallback((roomId: string) => {
+    roomJoinedResolverRef.current?.(roomId)
+  }, [])
 
   const flushPendingIce = useCallback(async (pc: RTCPeerConnection) => {
     const pending = pendingIceRef.current.splice(0)
@@ -150,13 +196,12 @@ export function useWebRTC(
     const pc = new RTCPeerConnection(pcConfigRef.current)
 
     pc.onicecandidate = (event) => {
-      if (event.candidate && roomIdRef.current) {
-        send({
-          type: 'ice_candidate',
-          room_id: roomIdRef.current,
-          payload: event.candidate.toJSON(),
-        })
+      if (!roomIdRef.current) return
+      if (!event.candidate) {
+        flushIceBatch(true)
+        return
       }
+      queueIceCandidate(event.candidate.toJSON())
     }
 
     pc.ontrack = (event) => {
@@ -226,7 +271,7 @@ export function useWebRTC(
 
     pcRef.current = pc
     return pc
-  }, [send, startMedia])
+  }, [send, startMedia, flushIceBatch, queueIceCandidate])
 
   const sendOffer = useCallback(async (iceRestart = false) => {
     const pc = await ensurePeerConnection()
@@ -261,8 +306,7 @@ export function useWebRTC(
     const rid = roomIdRef.current
     if (!rid) return
     send({ type: 'join_room', room_id: rid })
-    // Brief pause so the server registers room membership before signaling.
-    await new Promise((r) => setTimeout(r, 150))
+    await waitForRoomJoined(rid)
     if (isInitiatorRef.current) {
       await startMedia(true)
       await sendOffer(false)
@@ -270,7 +314,7 @@ export function useWebRTC(
       void ensurePeerConnection()
       requestOffer()
     }
-  }, [send, sendOffer, ensurePeerConnection, startMedia, requestOffer])
+  }, [send, sendOffer, ensurePeerConnection, startMedia, requestOffer, waitForRoomJoined])
 
   const resendOffer = useCallback(async (iceRestart = false) => {
     if (!isInitiatorRef.current) {
@@ -280,8 +324,28 @@ export function useWebRTC(
     await sendOffer(iceRestart)
   }, [sendOffer, requestOffer])
 
+  const addIceCandidate = useCallback(async (payload: RTCIceCandidateInit) => {
+    const pc = pcRef.current
+    if (!pc || !pc.remoteDescription) {
+      pendingIceRef.current.push(payload)
+      return
+    }
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(payload))
+    } catch (err) {
+      console.warn('[WebRTC] addIceCandidate deferred:', err)
+      pendingIceRef.current.push(payload)
+    }
+  }, [])
+
+  const handleIceCandidates = useCallback(async (candidates: RTCIceCandidateInit[]) => {
+    for (const c of candidates) {
+      await addIceCandidate(c)
+    }
+  }, [addIceCandidate])
+
   const handleSignal = useCallback(
-    async (type: string, payload: RTCSessionDescriptionInit | RTCIceCandidateInit) => {
+    async (type: string, payload: RTCSessionDescriptionInit | RTCIceCandidateInit | RTCIceCandidateInit[]) => {
       const rid = roomIdRef.current
       if (!rid) return
 
@@ -302,23 +366,15 @@ export function useWebRTC(
           await flushPendingIce(pc)
           setMediaError(null)
         } else if (type === 'ice_candidate') {
-          const pc = pcRef.current
-          if (!pc || !pc.remoteDescription) {
-            pendingIceRef.current.push(payload as RTCIceCandidateInit)
-            return
-          }
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(payload as RTCIceCandidateInit))
-          } catch (err) {
-            console.warn('[WebRTC] addIceCandidate deferred:', err)
-            pendingIceRef.current.push(payload as RTCIceCandidateInit)
-          }
+          await addIceCandidate(payload as RTCIceCandidateInit)
+        } else if (type === 'ice_candidates') {
+          await handleIceCandidates(payload as RTCIceCandidateInit[])
         }
       } catch {
         setMediaError('Signaling error.')
       }
     },
-    [ensurePeerConnection, flushPendingIce, send],
+    [ensurePeerConnection, flushPendingIce, send, addIceCandidate, handleIceCandidates],
   )
 
   const toggleMute = () => {
@@ -418,6 +474,7 @@ export function useWebRTC(
     cleanup,
     retryJoin: joinRoom,
     resetPeerConnection,
+    notifyRoomJoined,
   }
 }
 

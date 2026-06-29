@@ -17,7 +17,7 @@ export async function fetchIceConfig(): Promise<RTCConfiguration> {
       iceTransportPolicy: data.iceTransportPolicy ?? 'all',
       bundlePolicy: data.bundlePolicy ?? 'max-bundle',
       rtcpMuxPolicy: data.rtcpMuxPolicy ?? 'require',
-      iceCandidatePoolSize: data.iceCandidatePoolSize ?? 10,
+      iceCandidatePoolSize: data.iceCandidatePoolSize ?? 20,
     }
   } catch {
     return {
@@ -25,7 +25,7 @@ export async function fetchIceConfig(): Promise<RTCConfiguration> {
       iceTransportPolicy: 'all',
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
-      iceCandidatePoolSize: 10,
+      iceCandidatePoolSize: 20,
     }
   }
 }

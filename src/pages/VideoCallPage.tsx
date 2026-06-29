@@ -18,9 +18,10 @@ export default function VideoCallPage() {
   const { callId } = useParams()
   const navigate = useNavigate()
   const [call, setCall] = useState<CallSession | null>(null)
-  const signalHandlerRef = useRef<(type: string, payload: RTCSessionDescriptionInit | RTCIceCandidateInit) => void>(() => {})
+  const signalHandlerRef = useRef<(type: string, payload: RTCSessionDescriptionInit | RTCIceCandidateInit | RTCIceCandidateInit[]) => void>(() => {})
   const resendOfferRef = useRef<() => void>(() => {})
   const retryJoinRef = useRef<() => void>(() => {})
+  const notifyRoomJoinedRef = useRef<(roomId: string) => void>(() => {})
 
   const handleWsMessage = useCallback(
     (msg: Record<string, unknown>) => {
@@ -32,8 +33,24 @@ export default function VideoCallPage() {
         retryJoinRef.current()
         return
       }
-      if (msg.type === 'room_joined' || msg.type === 'peer_joined' || msg.type === 'request_offer') {
+      if (msg.type === 'room_joined' && typeof msg.room_id === 'string') {
+        notifyRoomJoinedRef.current(msg.room_id)
+        return
+      }
+      if (msg.type === 'peer_joined' || msg.type === 'request_offer') {
         resendOfferRef.current()
+        return
+      }
+      if (msg.type === 'cached_signal') {
+        const signalType = msg.signal_type as string
+        const payload = msg.payload as RTCSessionDescriptionInit
+        if (signalType && payload) {
+          signalHandlerRef.current(signalType, payload)
+        }
+        return
+      }
+      if (msg.type === 'ice_candidates' && Array.isArray(msg.payload)) {
+        signalHandlerRef.current('ice_candidates', msg.payload as RTCIceCandidateInit[])
         return
       }
       if (['offer', 'answer', 'ice_candidate'].includes(msg.type as string)) {
@@ -63,13 +80,15 @@ export default function VideoCallPage() {
     cleanup,
     toggleMute,
     toggleShareCamera,
+    notifyRoomJoined,
   } = useWebRTC(call?.room_id ?? null, send, true)
 
   useEffect(() => {
     signalHandlerRef.current = handleSignal
     resendOfferRef.current = () => void resendOffer()
     retryJoinRef.current = () => void retryJoin()
-  }, [handleSignal, resendOffer, retryJoin])
+    notifyRoomJoinedRef.current = notifyRoomJoined
+  }, [handleSignal, resendOffer, retryJoin, notifyRoomJoined])
 
   useEffect(() => {
     if (!callId) return
