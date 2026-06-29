@@ -28,7 +28,11 @@ export default function VideoCallPage() {
         navigate('/calls')
         return
       }
-      if (msg.type === 'peer_joined' || msg.type === 'request_offer') {
+      if (msg.type === 'join_denied') {
+        retryJoinRef.current()
+        return
+      }
+      if (msg.type === 'room_joined' || msg.type === 'peer_joined' || msg.type === 'request_offer') {
         resendOfferRef.current()
         return
       }

@@ -14,6 +14,7 @@ export async function fetchIceConfig(): Promise<RTCConfiguration> {
     const data = await res.json()
     return {
       iceServers: data.iceServers ?? DEFAULT_ICE_SERVERS,
+      iceTransportPolicy: data.iceTransportPolicy ?? 'all',
       bundlePolicy: data.bundlePolicy ?? 'max-bundle',
       rtcpMuxPolicy: data.rtcpMuxPolicy ?? 'require',
       iceCandidatePoolSize: data.iceCandidatePoolSize ?? 10,
@@ -21,6 +22,7 @@ export async function fetchIceConfig(): Promise<RTCConfiguration> {
   } catch {
     return {
       iceServers: DEFAULT_ICE_SERVERS,
+      iceTransportPolicy: 'all',
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
       iceCandidatePoolSize: 10,

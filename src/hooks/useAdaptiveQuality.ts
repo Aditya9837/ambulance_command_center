@@ -2,19 +2,21 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 
 export type ConnectionQuality = 'good' | 'fair' | 'poor'
 
-const MAX_VIDEO_BITRATE = 400_000
-const MIN_VIDEO_BITRATE = 120_000
-const MAX_VIDEO_FPS = 15
-const MIN_VIDEO_FPS = 8
-const MAX_SCALE = 3
+const MAX_VIDEO_BITRATE = 1_500_000
+const MIN_VIDEO_BITRATE = 500_000
+const MAX_VIDEO_FPS = 24
+const MIN_VIDEO_FPS = 12
+const MAX_SCALE = 2
 const MIN_SCALE = 1
 
 export function useAdaptiveQuality(pcRef: React.RefObject<RTCPeerConnection | null>) {
   const [quality, setQuality] = useState<ConnectionQuality>('good')
   const bitrateRef = useRef(MAX_VIDEO_BITRATE)
   const fpsRef = useRef(MAX_VIDEO_FPS)
-  const scaleRef = useRef(1.5)
+  const scaleRef = useRef(1.0)
   const stablePollsRef = useRef(0)
+  const prevPacketsLostRef = useRef(0)
+  const prevPacketsSentRef = useRef(0)
 
   const applyToSenders = useCallback((pc: RTCPeerConnection) => {
     pc.getSenders().forEach((sender) => {
@@ -45,10 +47,10 @@ export function useAdaptiveQuality(pcRef: React.RefObject<RTCPeerConnection | nu
 
         stats.forEach((report) => {
           if (report.type === 'outbound-rtp' && report.kind === 'video') {
-            packetsLost += report.packetsLost ?? 0
             packetsSent += report.packetsSent ?? 0
           }
-          if (report.type === 'remote-inbound-rtp') {
+          if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
+            packetsLost += report.packetsLost ?? 0
             jitter = Math.max(jitter, report.jitter ?? 0)
             rtt = Math.max(rtt, (report.roundTripTime ?? 0) * 1000)
           }
@@ -57,7 +59,12 @@ export function useAdaptiveQuality(pcRef: React.RefObject<RTCPeerConnection | nu
           }
         })
 
-        const lossRate = packetsSent > 0 ? packetsLost / packetsSent : 0
+        const deltaLost = packetsLost - prevPacketsLostRef.current
+        const deltaSent = packetsSent - prevPacketsSentRef.current
+        prevPacketsLostRef.current = packetsLost
+        prevPacketsSentRef.current = packetsSent
+
+        const lossRate = deltaSent > 0 ? deltaLost / deltaSent : 0
         const congested = lossRate > 0.03 || jitter > 0.03 || rtt > 300
         const stable = lossRate < 0.01 && jitter < 0.015 && rtt < 200
 
