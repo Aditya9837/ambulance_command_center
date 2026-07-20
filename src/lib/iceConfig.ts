@@ -2,8 +2,22 @@
 export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
-  { urls: 'turn:openrelay.metered.ca:80?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
+  {
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:80?transport=tcp',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp',
+      'turns:openrelay.metered.ca:443',
+    ],
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: ['turn:freestun.net:3478', 'turn:freestun.net:3478?transport=tcp'],
+    username: 'free',
+    credential: 'free',
+  },
 ]
 
 export async function fetchIceConfig(): Promise<RTCConfiguration> {

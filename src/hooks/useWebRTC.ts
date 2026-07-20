@@ -49,6 +49,9 @@ export function useWebRTC(
   const iceBatchRef = useRef<RTCIceCandidateInit[]>([])
   const iceFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const roomJoinedResolverRef = useRef<((roomId: string) => void) | null>(null)
+  const joinGenRef = useRef(0)
+  const pendingAnswerRef = useRef<RTCSessionDescriptionInit | null>(null)
+  const lastOfferAtRef = useRef(0)
 
   useEffect(() => {
     roomIdRef.current = roomId
@@ -249,9 +252,15 @@ export function useWebRTC(
     }
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+      const ice = pc.iceConnectionState
+      if (ice === 'connected' || ice === 'completed') {
         setIsConnected(true)
         setMediaError(null)
+      }
+      if (ice === 'failed') {
+        setIsConnected(false)
+        setMediaError('Network blocked — put phone on same Wi‑Fi as this PC, then retry.')
+        void sendOfferRef.current(true)
       }
     }
 
@@ -273,10 +282,28 @@ export function useWebRTC(
     return pc
   }, [send, startMedia, flushIceBatch, queueIceCandidate])
 
+  const applyRemoteAnswer = useCallback(async (pc: RTCPeerConnection, payload: RTCSessionDescriptionInit) => {
+    if (pc.currentRemoteDescription?.type === 'answer') return
+    if (pc.signalingState !== 'have-local-offer') {
+      pendingAnswerRef.current = payload
+      return
+    }
+    await pc.setRemoteDescription(new RTCSessionDescription(payload))
+    pendingAnswerRef.current = null
+    await flushPendingIce(pc)
+    setMediaError(null)
+  }, [flushPendingIce])
+
   const sendOffer = useCallback(async (iceRestart = false) => {
     const pc = await ensurePeerConnection()
     const rid = roomIdRef.current
     if (!pc || !rid || !isInitiatorRef.current) return
+
+    const now = Date.now()
+    // Debounce rapid renegotiation storms from StrictMode / peer_joined doubles.
+    if (!iceRestart && now - lastOfferAtRef.current < 800 && pc.signalingState === 'have-local-offer') {
+      return
+    }
 
     try {
       const offer = await pc.createOffer({
@@ -285,12 +312,18 @@ export function useWebRTC(
         iceRestart,
       })
       await pc.setLocalDescription(offer)
+      lastOfferAtRef.current = Date.now()
       send({ type: 'offer', room_id: rid, payload: offer })
       setMediaError(null)
+
+      const pending = pendingAnswerRef.current
+      if (pending) {
+        await applyRemoteAnswer(pc, pending)
+      }
     } catch {
       setMediaError('Could not start video — refresh or retry.')
     }
-  }, [ensurePeerConnection, send])
+  }, [ensurePeerConnection, send, applyRemoteAnswer])
 
   useEffect(() => {
     sendOfferRef.current = sendOffer
@@ -305,10 +338,14 @@ export function useWebRTC(
   const joinRoom = useCallback(async () => {
     const rid = roomIdRef.current
     if (!rid) return
+    const gen = ++joinGenRef.current
     send({ type: 'join_room', room_id: rid })
     await waitForRoomJoined(rid)
+    if (gen !== joinGenRef.current) return
+
     if (isInitiatorRef.current) {
       await startMedia(true)
+      if (gen !== joinGenRef.current) return
       await sendOffer(false)
     } else {
       void ensurePeerConnection()
@@ -351,30 +388,45 @@ export function useWebRTC(
 
       try {
         if (type === 'offer') {
+          // Doctor (initiator) must never apply offers.
+          if (isInitiatorRef.current) return
+
           const pc = await ensurePeerConnection()
           if (!pc) return
-          await pc.setRemoteDescription(new RTCSessionDescription(payload as RTCSessionDescriptionInit))
+          const offer = payload as RTCSessionDescriptionInit
+          if (pc.signalingState !== 'stable' && pc.signalingState !== 'have-remote-offer') {
+            return
+          }
+          await pc.setRemoteDescription(new RTCSessionDescription(offer))
           await flushPendingIce(pc)
           const answer = await pc.createAnswer()
           await pc.setLocalDescription(answer)
           send({ type: 'answer', room_id: rid, payload: answer })
           setMediaError(null)
         } else if (type === 'answer') {
+          if (!isInitiatorRef.current) return
           const pc = pcRef.current ?? (await ensurePeerConnection())
-          if (!pc) return
-          await pc.setRemoteDescription(new RTCSessionDescription(payload as RTCSessionDescriptionInit))
-          await flushPendingIce(pc)
-          setMediaError(null)
+          if (!pc) {
+            pendingAnswerRef.current = payload as RTCSessionDescriptionInit
+            return
+          }
+          await applyRemoteAnswer(pc, payload as RTCSessionDescriptionInit)
         } else if (type === 'ice_candidate') {
           await addIceCandidate(payload as RTCIceCandidateInit)
         } else if (type === 'ice_candidates') {
           await handleIceCandidates(payload as RTCIceCandidateInit[])
         }
-      } catch {
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        if (/InvalidStateError|stable|wrong state/i.test(message)) {
+          console.warn('[WebRTC] ignored signaling race:', message)
+          return
+        }
+        console.error('[WebRTC] signaling failed:', err)
         setMediaError('Signaling error.')
       }
     },
-    [ensurePeerConnection, flushPendingIce, send, addIceCandidate, handleIceCandidates],
+    [ensurePeerConnection, flushPendingIce, send, addIceCandidate, handleIceCandidates, applyRemoteAnswer],
   )
 
   const toggleMute = () => {
@@ -417,8 +469,12 @@ export function useWebRTC(
   }, [shareCamera, startMedia, ensurePeerConnection, sendOffer])
 
   useEffect(() => {
-    if (roomId) void joinRoom()
+    if (!roomId) return
+    void joinRoom()
     return () => {
+      // Invalidate in-flight join from StrictMode remount.
+      joinGenRef.current += 1
+      pendingAnswerRef.current = null
       resetPeerConnection()
     }
   }, [roomId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -432,7 +488,7 @@ export function useWebRTC(
     const scheduleRetry = () => {
       timer = setTimeout(() => {
         if (isInitiatorRef.current) {
-          void sendOffer(false)
+          void sendOffer(true)
         } else {
           requestOffer()
         }

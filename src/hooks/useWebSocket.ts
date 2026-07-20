@@ -22,7 +22,9 @@ export function useWebSocket(
   const reconnectMs = useRef(MIN_RECONNECT_MS)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const intentionalClose = useRef(false)
+  const softReplace = useRef(false)
   const hadConnected = useRef(false)
+  const connectGen = useRef(0)
   const queueRef = useRef<string[]>([])
   const [isConnected, setIsConnected] = useState(false)
 
@@ -89,39 +91,56 @@ export function useWebSocket(
       return
     }
 
+    const gen = ++connectGen.current
+
     if (wsRef.current) {
+      // Soft replace (token/effect re-run) — do not treat as network drop.
+      softReplace.current = true
       intentionalClose.current = true
-      wsRef.current.close()
+      const prev = wsRef.current
       wsRef.current = null
+      try {
+        prev.close()
+      } catch { /* ignore */ }
     }
     intentionalClose.current = false
 
     const ws = new WebSocket(url)
 
     ws.onopen = () => {
+      if (gen !== connectGen.current) {
+        try { ws.close() } catch { /* ignore */ }
+        return
+      }
+      const notifyReconnect = hadConnected.current && !softReplace.current
+      softReplace.current = false
       reconnectMs.current = MIN_RECONNECT_MS
       setIsConnected(true)
       flushQueue(ws)
-      if (hadConnected.current) {
+      if (notifyReconnect) {
         onReconnectRef.current?.()
       }
       hadConnected.current = true
     }
 
     ws.onmessage = (event) => {
+      if (gen !== connectGen.current) return
       try {
         handlerRef.current(JSON.parse(event.data))
       } catch { /* ignore */ }
     }
 
     ws.onerror = () => {
-      ws.close()
+      try { ws.close() } catch { /* ignore */ }
     }
 
     ws.onclose = (event) => {
-      wsRef.current = null
+      if (wsRef.current === ws) {
+        wsRef.current = null
+      }
+      if (gen !== connectGen.current) return
       setIsConnected(false)
-      if (intentionalClose.current) return
+      if (intentionalClose.current || softReplace.current) return
       if (event.code === 4401) {
         api.setToken(null)
         return
@@ -148,6 +167,8 @@ export function useWebSocket(
 
     return () => {
       intentionalClose.current = true
+      softReplace.current = false
+      connectGen.current += 1
       clearReconnect()
       clearInterval(ping)
       wsRef.current?.close()

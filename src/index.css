@@ -25,6 +25,11 @@
   box-sizing: border-box;
 }
 
+.ambulance-map-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
 body {
   margin: 0;
   font-family: var(--font-sans);
