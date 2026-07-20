@@ -1,33 +1,34 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component } from 'react'
+import type { ErrorInfo, ReactNode } from 'react'
 
 interface Props {
-  children: ReactNode;
-  fallback?: ReactNode;
+  children: ReactNode
+  fallback?: ReactNode
 }
 
 interface State {
-  hasError: boolean;
-  error: Error | null;
+  hasError: boolean
+  error: Error | null
 }
 
 export class ErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
-    error: null
-  };
+    error: null,
+  }
 
   public static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
+    return { hasError: true, error }
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("Uncaught error in component boundary:", error, errorInfo);
+    console.error('Uncaught error in component boundary:', error, errorInfo)
   }
 
   public render() {
     if (this.state.hasError) {
       if (this.props.fallback) {
-        return this.props.fallback;
+        return this.props.fallback
       }
       return (
         <div className="p-6 bg-slate-900 border border-red-900/50 rounded-xl max-w-lg mx-auto my-12 text-center text-slate-100 shadow-2xl">
@@ -52,9 +53,9 @@ export class ErrorBoundary extends Component<Props, State> {
             Reload Page
           </button>
         </div>
-      );
+      )
     }
 
-    return this.props.children;
+    return this.props.children
   }
 }
